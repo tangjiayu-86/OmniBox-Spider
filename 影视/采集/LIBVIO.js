@@ -1,8 +1,8 @@
 // @name LIBVIO
 // @author 梦
-// @description 刮削：未接入，弹幕：未接入，嗅探：不需要（直链优先，必要时客户端解析兜底）
+// @description 刮削：未接入，弹幕：未接入，嗅探：不需要（直链优先，支持网盘线路展开）
 // @dependencies
-// @version 1.1.0
+// @version 1.3.1
 // @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/openclaw/影视/采集/LIBVIO.js
 
 const http = require("http");
@@ -14,6 +14,10 @@ const runner = require("spider_runner");
 const HOST = "https://www.libvio.mov";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 const DEFAULT_PAGE_SIZE = 12;
+const DRIVE_TYPE_CONFIG = (process.env.DRIVE_TYPE_CONFIG || "quark;uc").split(";").map((t) => t.trim().toLowerCase()).filter(Boolean);
+const SOURCE_NAMES_CONFIG = (process.env.SOURCE_NAMES_CONFIG || "本地代理;服务端代理;直连").split(";").map((s) => s.trim()).filter(Boolean);
+const DRIVE_ORDER = (process.env.DRIVE_ORDER || "baidu;tianyi;quark;uc;115;xunlei;ali;123pan").split(";").map((s) => s.trim().toLowerCase()).filter(Boolean);
+const panShareCache = new Map();
 
 const CLASS_LIST = [
     { type_id: "1", type_name: "电影" },
@@ -322,8 +326,165 @@ function parseVodList(html = "") {
     return results;
 }
 
+function normalizePanSourceName(name = "") {
+    const text = stripTags(name);
+    const match = text.match(/\(([^()]+)\)/);
+    if (match?.[1]) return match[1].trim();
+    return text.replace(/^视频下载\s*/u, "").trim() || text;
+}
+
+function splitNetdiskPanels(html = "") {
+    const marker = '<div class="playlist-panel netdisk-panel">';
+    const pieces = String(html || "").split(marker);
+    return pieces.slice(1).map((part) => marker + part);
+}
+
 function parseMetaItems(html = "") {
     return ensureArray(html.match(/<span class="meta-item">([\s\S]*?)<\/span>/g)).map((item) => stripTags(item));
+}
+
+function isPanUrl(url = "") {
+    const u = String(url || "").toLowerCase();
+    return u.includes("pan.baidu.com") || u.includes("quark.cn") || u.includes("pan.quark.cn") || u.includes("drive.uc.cn") || u.includes("aliyundrive.com") || u.includes("alipan.com") || u.includes("xunlei.com") || u.includes("cloud.189.cn") || u.includes("115.com") || u.includes("123pan.com");
+}
+
+function normalizeShareUrl(url = "") {
+    let value = String(url || "").trim();
+    if (value.startsWith("push://")) value = value.slice("push://".length);
+    if (value.startsWith("push:")) value = value.slice("push:".length);
+    return value.trim();
+}
+
+function isVideoFile(file) {
+    if (!file) return false;
+    const fileName = String(file.file_name || file.name || "").toLowerCase();
+    const exts = [".mp4", ".mkv", ".avi", ".flv", ".mov", ".wmv", ".m3u8", ".ts", ".webm", ".m4v"];
+    if (exts.some((ext) => fileName.endsWith(ext))) return true;
+    const formatType = String(file.format_type || "").toLowerCase();
+    return formatType.includes("video") || formatType.includes("mpeg") || formatType.includes("h264");
+}
+
+function getFileId(file) {
+    return file?.fid || file?.file_id || "";
+}
+
+function getFileName(file) {
+    return file?.file_name || file?.name || "";
+}
+
+async function getAllVideoFiles(shareURL, files) {
+    const result = [];
+    for (const file of files || []) {
+        if (file?.file && isVideoFile(file)) {
+            result.push(file);
+            continue;
+        }
+        if (file?.dir) {
+            try {
+                const subFileId = getFileId(file);
+                if (!subFileId) continue;
+                const subFileList = await OmniBox.getDriveFileList(shareURL, subFileId);
+                if (Array.isArray(subFileList?.files)) {
+                    const subVideos = await getAllVideoFiles(shareURL, subFileList.files);
+                    result.push(...subVideos);
+                }
+            } catch (error) {
+                logInfo("获取网盘子目录失败", { shareURL, name: getFileName(file), error: error.message });
+            }
+        }
+    }
+    return result;
+}
+
+async function loadPanFiles(shareURL) {
+    if (!shareURL) return null;
+    if (panShareCache.has(shareURL)) return panShareCache.get(shareURL);
+    try {
+        const driveInfo = await OmniBox.getDriveInfoByShareURL(shareURL);
+        const fileList = await OmniBox.getDriveFileList(shareURL, "0");
+        const files = Array.isArray(fileList?.files) ? fileList.files : [];
+        const videos = await getAllVideoFiles(shareURL, files);
+        const result = { driveInfo, videos };
+        panShareCache.set(shareURL, result);
+        return result;
+    } catch (error) {
+        logInfo("读取网盘文件失败", { shareURL, error: error.message });
+        return null;
+    }
+}
+
+function inferDriveTypeFromSourceName(name = "") {
+    const raw = String(name || "").toLowerCase();
+    if (raw.includes("百度")) return "baidu";
+    if (raw.includes("天翼")) return "tianyi";
+    if (raw.includes("夸克")) return "quark";
+    if (raw === "uc" || raw.includes("uc")) return "uc";
+    if (raw.includes("115")) return "115";
+    if (raw.includes("迅雷")) return "xunlei";
+    if (raw.includes("阿里")) return "ali";
+    if (raw.includes("123")) return "123pan";
+    return raw;
+}
+
+function sortPlaySourcesByDriveOrder(playSources = []) {
+    if (!Array.isArray(playSources) || playSources.length <= 1 || DRIVE_ORDER.length === 0) {
+        return playSources;
+    }
+    const orderMap = new Map(DRIVE_ORDER.map((name, index) => [name, index]));
+    return [...playSources].sort((a, b) => {
+        const aType = inferDriveTypeFromSourceName(a?.name || "");
+        const bType = inferDriveTypeFromSourceName(b?.name || "");
+        const aOrder = orderMap.has(aType) ? orderMap.get(aType) : Number.MAX_SAFE_INTEGER;
+        const bOrder = orderMap.has(bType) ? orderMap.get(bType) : Number.MAX_SAFE_INTEGER;
+        return aOrder - bOrder;
+    });
+}
+
+function buildPanEpisodePlayId(shareURL, fileId, meta = {}) {
+    return `${shareURL}|${fileId}|||${encodePlayId(meta)}`;
+}
+
+function decodeCombinedPlayId(playId = "") {
+    if (!String(playId).includes("|||")) return { main: String(playId || ""), meta: {} };
+    const [main, metaB64] = String(playId).split("|||");
+    return { main, meta: decodePlayId(metaB64 || "") };
+}
+
+function expandPanSourcesWithRoutes(playSources = [], from = "web") {
+    const result = [];
+    for (const source of playSources) {
+        const driveType = inferDriveTypeFromSourceName(source?.name || "");
+        const shouldExpandRoutes = DRIVE_TYPE_CONFIG.length === 0 || !driveType || DRIVE_TYPE_CONFIG.includes(driveType);
+
+        if (!shouldExpandRoutes) {
+            result.push(source);
+            continue;
+        }
+
+        let routeNames = [...SOURCE_NAMES_CONFIG];
+        if (from === "web") {
+            routeNames = routeNames.filter((name) => name !== "本地代理");
+        }
+        if (!routeNames.length) {
+            result.push(source);
+            continue;
+        }
+
+        for (const routeName of routeNames) {
+            result.push({
+                name: `${source.name}-${routeName}`,
+                episodes: (source.episodes || []).map((ep) => {
+                    const decoded = decodeCombinedPlayId(ep.playId);
+                    const meta = { ...(decoded.meta || {}), routeType: routeName, flag: `${source.name}-${routeName}` };
+                    return {
+                        name: ep.name,
+                        playId: `${decoded.main}|||${encodePlayId(meta)}`
+                    };
+                })
+            });
+        }
+    }
+    return result;
 }
 
 function decodePlayerUrl(url = "", encrypt = 0) {
@@ -421,12 +582,13 @@ async function detail(params, context) {
         const director = metaItems.find((item) => item.startsWith("导演："))?.replace(/^导演：/, "") || "";
 
         const sourceMatches = [...html.matchAll(/<div class="playlist-panel">([\s\S]*?)<\/ul>/g)];
-        const vod_play_sources = sourceMatches.map((matched) => {
+        const collectSources = sourceMatches.map((matched) => {
             const block = matched[1];
             const sourceName = stripTags(block.match(/<h3>([\s\S]*?)<\/h3>/)?.[1] || "播放");
             const episodes = [...block.matchAll(/href="([^"]*\/play\/[^\"]+\.html)"[^>]*>([\s\S]*?)<\/a>/g)].map((item) => ({
                 name: stripTags(item[2]),
                 playId: encodePlayId({
+                    mode: "collect",
                     url: fixUrl(item[1]),
                     flag: sourceName,
                     name: stripTags(item[2])
@@ -434,6 +596,45 @@ async function detail(params, context) {
             }));
             return { name: sourceName, episodes };
         }).filter((item) => item.episodes.length);
+
+        const netdiskPanels = splitNetdiskPanels(html);
+        const netdiskSources = [];
+        for (const panelHtml of netdiskPanels) {
+            const sourceName = normalizePanSourceName(panelHtml.match(/<h3>([\s\S]*?)<\/h3>/)?.[1] || "网盘");
+            const shareItems = [...panelHtml.matchAll(/<a class="netdisk-item"[^>]*href="([^"]+)"[^>]*>[\s\S]*?<span class="netdisk-name">([\s\S]*?)<\/span>[\s\S]*?<span class="netdisk-url">([\s\S]*?)<\/span>/g)];
+            const episodes = [];
+            for (const item of shareItems) {
+                const shareUrl = normalizeShareUrl(stripTags(item[3] || item[1] || "").trim());
+                if (!isPanUrl(shareUrl)) continue;
+                const panInfo = await loadPanFiles(shareUrl);
+                const files = Array.isArray(panInfo?.videos) ? panInfo.videos : [];
+                if (!files.length) continue;
+                for (const file of files) {
+                    const fileId = getFileId(file);
+                    if (!fileId) continue;
+                    const fileName = getFileName(file) || stripTags(item[2] || "网盘资源").trim();
+                    episodes.push({
+                        name: fileName,
+                        playId: buildPanEpisodePlayId(shareUrl, fileId, {
+                            mode: "pan-file",
+                            shareUrl,
+                            fileId,
+                            flag: sourceName,
+                            name: fileName,
+                            vodName: name,
+                            vodId: String(videoId || "")
+                        })
+                    });
+                }
+            }
+            if (episodes.length) {
+                netdiskSources.push({ name: sourceName, episodes });
+            }
+        }
+
+        const sortedNetdiskSources = sortPlaySourcesByDriveOrder(netdiskSources);
+        const expandedNetdiskSources = expandPanSourcesWithRoutes(sortedNetdiskSources, context?.from || "web");
+        const vod_play_sources = [...collectSources, ...expandedNetdiskSources];
 
         logInfo("detail 完成", { videoId, sourceCount: vod_play_sources.length, episodeCount: vod_play_sources.reduce((n, item) => n + item.episodes.length, 0) });
         return {
@@ -487,10 +688,36 @@ async function play(params, context) {
     const playId = String(params?.playId || "").trim();
     if (!playId) return emptyPlay(flag);
     try {
-        const meta = decodePlayId(playId);
-        const playPageUrl = meta.url;
+        const { main: rawPlayId, meta } = decodeCombinedPlayId(playId);
+        const playPageUrl = rawPlayId;
         const playFlag = String(meta.flag || flag || "LIBVIO");
         if (!playPageUrl) return emptyPlay(playFlag);
+
+        if (meta.mode === "pan-file") {
+            const shareURL = normalizeShareUrl(meta.shareUrl || "");
+            const fileId = String(meta.fileId || "");
+            const routeType = String(meta.routeType || "").trim() || (context?.from === "web" ? "服务端代理" : "直连");
+            if (shareURL && fileId) {
+                try {
+                    const playInfo = await OmniBox.getDriveVideoPlayInfo(shareURL, fileId, routeType);
+                    const urlList = Array.isArray(playInfo?.url) ? playInfo.url : [];
+                    return {
+                        urls: urlList.map((item) => ({ name: item.name || meta.name || "播放", url: item.url })),
+                        flag: shareURL,
+                        header: playInfo?.header || {},
+                        parse: 0,
+                        danmaku: playInfo?.danmaku || []
+                    };
+                } catch (error) {
+                    logInfo("play 网盘直取失败", { shareURL, fileId, routeType, error: error.message });
+                    return {
+                        parse: 0,
+                        flag: playFlag,
+                        urls: [{ name: meta.name || "网盘资源", url: `push://${shareURL}` }]
+                    };
+                }
+            }
+        }
 
         logInfo("play 请求", { playPageUrl, flag: playFlag, from: context?.from || "web" });
         const html = await fetchHtml(playPageUrl);
