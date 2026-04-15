@@ -2,7 +2,7 @@
 // @author 梦
 // @description 站点搜索 + 网盘资源解析（夸克/百度/迅雷等），支持网盘目录展开、刮削、弹幕、观看记录
 // @dependencies: axios
-// @version 1.0.1
+// @version 1.1.2
 // @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/影视/网盘/聚盘搜索.js
 
 
@@ -23,7 +23,7 @@ const SEARCH_POLL_INTERVAL_MS = 900;
 // 用法：在搜索结果落地前，先把全部 share_link 汇总成一批，调用一次 pancheck，再过滤无效链接
 const PANCHECK_API = text(process.env.PANCHECK_API || "");
 const PANCHECK_ENABLED = text(process.env.PANCHECK_ENABLED || (PANCHECK_API ? "1" : "0")) === "1";
-const PANCHECK_PLATFORMS = text(process.env.PANCHECK_PLATFORMS || "quark,baidu,uc,pan123,tianyi,cmcc"); // 例：quark,baidu,xunlei
+const PANCHECK_PLATFORMS = text(process.env.PANCHECK_PLATFORMS || "quark,baidu,uc,pan123,tianyi,cmcc"); // 例：quark,baidu,xunlei 或 quark;baidu;xunlei
 
 // 网盘排序配置（必须置于顶部配置区，便于统一管理）
 const DRIVE_ORDER_DEFAULT = "百度网盘,天翼网盘,夸克网盘,UC网盘,115网盘,迅雷网盘,阿里网盘";
@@ -41,6 +41,13 @@ const http = axios.create({
 
 function text(v) {
   return String(v == null ? "" : v).trim();
+}
+
+function splitConfigList(v) {
+  return text(v)
+    .split(/[;,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function sleep(ms) {
@@ -373,8 +380,7 @@ function normalizeDriveType(driveTypeRaw, link) {
 }
 
 function getPanCheckSelectedPlatforms() {
-  return text(PANCHECK_PLATFORMS)
-    .split(",")
+  return splitConfigList(PANCHECK_PLATFORMS)
     .map((x) => driveAliasToCode(x))
     .filter(Boolean);
 }
@@ -416,6 +422,7 @@ function splitLinksByPanCheckPlatforms(links = []) {
  * 默认顺序：百度 → 天翼 → 夸克 → UC → 115 → 迅雷 → 阿里
  * 配置示例：DRIVE_ORDER=夸克网盘,百度网盘,迅雷网盘
  *           DRIVE_ORDER=quark,baidu,xunlei
+ *           DRIVE_ORDER=quark;baidu;xunlei
  */
 function parseDriveOrderEnv() {
   const DEFAULT_ORDER = ["baidu", "tianyiyun", "quark", "uc", "115", "xunlei", "aliyun"];
@@ -423,7 +430,7 @@ function parseDriveOrderEnv() {
   if (!raw) return DEFAULT_ORDER;
 
   const out = [];
-  for (const part of raw.split(",").map(x => x.trim()).filter(Boolean)) {
+  for (const part of splitConfigList(raw)) {
     const code = driveAliasToCode(part);
     if (code && !out.includes(code)) out.push(code);
   }

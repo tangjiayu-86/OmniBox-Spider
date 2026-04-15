@@ -1,7 +1,7 @@
 // @name 盘搜分组
 // @author 
 // @description 刮削：支持，弹幕：支持，嗅探：支持，只支持tvbox接口
-// @version 1.1.6
+// @version 1.2.2
 // @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/影视/网盘/盘搜分组.js
 
 /**
@@ -14,10 +14,10 @@
 * 1. 配置盘搜API地址到环境变量 PANSOU_API 中,或直接修改下面的 PANSOU_API 常量
 * 2. (可选)配置盘搜频道到环境变量 PANSOU_CHANNELS 中
 * 3. (可选)配置盘搜插件到环境变量 PANSOU_PLUGINS 中
-* 4. (可选)配置网盘类型过滤到环境变量 PANSOU_CLOUD_TYPES 中(如:baidu,aliyun,quark)
+* 4. (可选)配置网盘类型过滤到环境变量 PANSOU_CLOUD_TYPES 中(支持逗号/分号分隔,如:baidu,aliyun,quark 或 baidu;aliyun;quark)
 * 5. (可选)配置 PanCheck API 地址到环境变量 PANCHECK_API 中,用于过滤无效链接
 * 6. (可选)配置 PanCheck 是否启用到环境变量 PANCHECK_ENABLED 中(true/false,默认:如果配置了 PANCHECK_API 则启用)
-* 7. (可选)配置 PanCheck 选择的平台到环境变量 PANCHECK_PLATFORMS 中(如:baidu,aliyun,quark)
+* 7. (可选)配置 PanCheck 选择的平台到环境变量 PANCHECK_PLATFORMS 中(支持逗号/分号分隔,如:baidu,aliyun,quark 或 baidu;aliyun;quark)
 * 8. (可选)配置 PANSOU_FILTER 中(如:{"include":["合集","全集"],"exclude":["预告"]})
 */
 
@@ -33,12 +33,19 @@ const PANCHECK_API = process.env.PANCHECK_API || "";
 const PANCHECK_ENABLED = true;
 const PANCHECK_PLATFORMS = process.env.PANCHECK_PLATFORMS || "quark,baidu,uc,pan123,tianyi,cmcc";
 
-// 网盘类型匹配配置: 使用分号分隔，例如 quark;uc
-const DRIVE_TYPE_CONFIG = (process.env.DRIVE_TYPE_CONFIG || "quark;uc").split(';').map((t) => t.trim()).filter(Boolean);
-// 线路名称配置: 使用分号分隔，例如 本地代理;服务端代理;直连
-const SOURCE_NAMES_CONFIG = (process.env.SOURCE_NAMES_CONFIG || "本地代理;服务端代理;直连").split(';').map((s) => s.trim()).filter(Boolean);
+function splitConfigList(value) {
+    return String(value || "")
+        .split(/[;,]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+}
+
+// 网盘类型匹配配置: 支持逗号/分号分隔，例如 quark;uc 或 quark,uc
+const DRIVE_TYPE_CONFIG = splitConfigList(process.env.DRIVE_TYPE_CONFIG || "quark;uc");
+// 线路名称配置: 支持逗号/分号分隔，例如 本地代理;服务端代理;直连
+const SOURCE_NAMES_CONFIG = splitConfigList(process.env.SOURCE_NAMES_CONFIG || "本地代理;服务端代理;直连");
 // 详情页播放线路和搜索分组的网盘排序顺序
-const DRIVE_ORDER = (process.env.DRIVE_ORDER || "baidu;tianyi;quark;uc;115;xunlei;ali;123pan").split(';').map((s) => s.trim().toLowerCase()).filter(Boolean);
+const DRIVE_ORDER = splitConfigList(process.env.DRIVE_ORDER || "baidu;tianyi;quark;uc;115;xunlei;ali;123pan").map((s) => s.toLowerCase());
 // 详情链路缓存时间（秒），默认 12 小时
 const PANSOU_GROUP_CACHE_EX_SECONDS = Number(process.env.PANSOU_GROUP_CACHE_EX_SECONDS || 43200);
 // 是否异步刮削，默认 true。仅当明确配置为 false 时才走同步刮削。
@@ -249,7 +256,7 @@ async function requestPansouAPI(params = {}) {
     if (params.cloud_types) {
         body.cloud_types = params.cloud_types;
     } else if (PANSOU_CLOUD_TYPES) {
-        body.cloud_types = PANSOU_CLOUD_TYPES.split(',');
+        body.cloud_types = splitConfigList(PANSOU_CLOUD_TYPES);
     }
     if (PANSOU_FILTER) {
         body.filter = PANSOU_FILTER;
@@ -286,9 +293,8 @@ async function requestPansouAPI(params = {}) {
 * 调用 PanCheck API 检测链接有效性
 */
 function getPanCheckSelectedPlatforms() {
-    return String(PANCHECK_PLATFORMS || "")
-        .split(",")
-        .map((p) => normalizeDriveType(p.trim()))
+    return splitConfigList(PANCHECK_PLATFORMS)
+        .map((p) => normalizeDriveType(p))
         .filter(Boolean);
 }
 
