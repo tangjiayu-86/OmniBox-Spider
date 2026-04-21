@@ -2,7 +2,7 @@
 # @name 人人电影
 # @author 梦
 # @description 影视站：https://www.rrdynb.com/ ，支持首页、分类、搜索、详情与网盘线路提取（Python版）
-# @version 1.1.5
+# @version 1.1.6
 # @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/影视/网盘/人人电影.py
 
 import json
@@ -543,6 +543,7 @@ def extract_cards(text: str, type_id: str, type_name: str):
     for block in CARD_RE.findall(text):
         href_m = re.search(r'<a[^>]+class="movie-thumbnails"[^>]+href="([^"]+)"', block, re.I)
         title_m = re.search(r'<h2>\s*<a[^>]+title="([^"]+)"', block, re.S | re.I)
+        title_html_m = re.search(r'<h2>\s*<a[^>]*>(.*?)</a>', block, re.S | re.I)
         img_m = re.search(r'<img[^>]+(?:data-original|src)="([^"]+)"', block, re.I)
         brief_m = re.search(r'<div\s+class="brief"[^>]*>(.*?)</div>', block, re.S | re.I)
         date_m = re.search(r'<div\s+class="tags"[^>]*>\s*([^<\n\r]+)', block, re.S | re.I)
@@ -551,7 +552,10 @@ def extract_cards(text: str, type_id: str, type_name: str):
         href = abs_url(href_m.group(1)) if href_m else ""
         if not href:
             continue
-        title = normalize_vod_title(title_m.group(1) if title_m else "")
+        raw_title = title_m.group(1) if title_m else ""
+        if not raw_title and title_html_m:
+            raw_title = title_html_m.group(1)
+        title = normalize_vod_title(raw_title)
         brief = clean_html(brief_m.group(1) if brief_m else "")
         date = clean_html(date_m.group(1) if date_m else "")
         remarks = " | ".join([x for x in [date, f"豆瓣{clean_html(douban_m.group(1))}" if douban_m else "", f"IMDB{clean_html(imdb_m.group(1))}" if imdb_m else ""] if x])
