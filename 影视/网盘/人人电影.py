@@ -2,10 +2,8 @@
 # @name 人人电影
 # @author 梦
 # @description 影视站：https://www.rrdynb.com/ ，支持首页、分类、搜索、详情与网盘线路提取（Python版）
-# @version 1.1.4
+# @version 1.1.2
 # @downloadURL https://gh-proxy.org/https://github.com/Silent1566/OmniBox-Spider/raw/refs/heads/main/影视/网盘/人人电影.py
-# @dependencies curl_cffi,cloudscraper
-# @dependencies curl_cffi,cloudscraper
 
 import json
 import html
@@ -14,21 +12,8 @@ import re
 from urllib.parse import quote
 from spider_runner import OmniBox, run
 
-try:
-    from curl_cffi import requests as curl_requests
-except Exception:
-    curl_requests = None
-
-try:
-    import cloudscraper
-except Exception:
-    cloudscraper = None
-
 BASE_URL = "https://www.rrdynb.com"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
-RRDYNB_COOKIE = str(os.environ.get("RRDYNB_COOKIE") or "").strip()
-SEARCH_COOKIE_CACHE_KEY = "rrdynb:search-cookie"
-SEARCH_COOKIE_TTL_SECONDS = int(os.environ.get("RRDYNB_SEARCH_COOKIE_TTL_SECONDS", "1800") or 1800)
 
 CATEGORY_MAP = {
     "movie": {"type_id": "2", "type_name": "电影", "path": "/movie/"},
@@ -124,120 +109,20 @@ async def log(level: str, message: str):
         pass
 
 
-def is_cf_challenge(text: str) -> bool:
-    raw = str(text or "")
-    return "Just a moment" in raw or "Enable JavaScript and cookies to continue" in raw or "cf-mitigated" in raw
-
-
-def cookiejar_to_string(jar) -> str:
-    try:
-        if jar is None:
-            return ""
-        if hasattr(jar, "items"):
-            return "; ".join(f"{k}={v}" for k, v in jar.items())
-        if hasattr(jar, "get_dict"):
-            data = jar.get_dict()
-            return "; ".join(f"{k}={v}" for k, v in data.items())
-    except Exception:
-        return ""
-    return ""
-
-
-async def load_search_cookie() -> str:
-    if RRDYNB_COOKIE:
-        return RRDYNB_COOKIE
-    try:
-        value = await OmniBox.getCache(SEARCH_COOKIE_CACHE_KEY)
-        return str(value or "").strip()
-    except Exception:
-        return ""
-
-
-async def save_search_cookie(cookie: str):
-    cookie = str(cookie or "").strip()
-    if not cookie:
-        return
-    try:
-        await OmniBox.setCache(SEARCH_COOKIE_CACHE_KEY, cookie, SEARCH_COOKIE_TTL_SECONDS)
-    except Exception:
-        pass
-
-
-async def clear_search_cookie():
-    try:
-        await OmniBox.deleteCache(SEARCH_COOKIE_CACHE_KEY)
-    except Exception:
-        try:
-            await OmniBox.setCache(SEARCH_COOKIE_CACHE_KEY, "", 1)
-        except Exception:
-            pass
-
-
-async def request_text(url: str, referer: str = None, cookie: str = "") -> str:
-    headers = {
-        "User-Agent": UA,
-        "Referer": referer or f"{BASE_URL}/",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    }
-    cookie = str(cookie or "").strip()
-    if cookie:
-        headers["Cookie"] = cookie
-
-    async def save_from_jar(jar, fallback_cookie=""):
-        merged = cookiejar_to_string(jar) or fallback_cookie
-        if merged:
-            await save_search_cookie(merged)
-        return merged
-
-    if curl_requests is not None:
-        try:
-            session = curl_requests.Session(impersonate="chrome124")
-            # 先预热首页，同会话拿 cookie，再打搜索
-            session.get(BASE_URL, headers={**headers, "Referer": f"{BASE_URL}/"}, timeout=20)
-            resp = session.get(url, headers=headers, timeout=20)
-            text = str(resp.text or "")
-            status = int(resp.status_code or 0)
-            if (status != 200 or is_cf_challenge(text)):
-                await save_from_jar(getattr(session, "cookies", None), cookie)
-                resp = session.get(url, headers=headers, timeout=20)
-                text = str(resp.text or "")
-                status = int(resp.status_code or 0)
-            if status == 200 and not is_cf_challenge(text):
-                await save_from_jar(getattr(session, "cookies", None), cookie)
-                return text
-        except Exception:
-            pass
-
-    if cloudscraper is not None:
-        try:
-            scraper = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows", "mobile": False})
-            scraper.get(BASE_URL, headers={**headers, "Referer": f"{BASE_URL}/"}, timeout=20)
-            resp = scraper.get(url, headers=headers, timeout=20)
-            text = str(resp.text or "")
-            status = int(resp.status_code or 0)
-            if (status != 200 or is_cf_challenge(text)):
-                await save_from_jar(getattr(scraper, "cookies", None), cookie)
-                resp = scraper.get(url, headers=headers, timeout=20)
-                text = str(resp.text or "")
-                status = int(resp.status_code or 0)
-            if status == 200 and not is_cf_challenge(text):
-                await save_from_jar(getattr(scraper, "cookies", None), cookie)
-                return text
-        except Exception:
-            pass
-
+async def request_text(url: str, referer: str = None) -> str:
     res = await OmniBox.request(url, {
         "method": "GET",
-        "headers": headers,
+        "headers": {
+            "User-Agent": UA,
+            "Referer": referer or f"{BASE_URL}/",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        },
     })
     status = int(res.get("statusCode") or 0)
     body = res.get("body", "")
     text = body.decode("utf-8", "ignore") if isinstance(body, (bytes, bytearray)) else str(body or "")
-    if status != 200 or is_cf_challenge(text):
+    if status != 200:
         raise RuntimeError(f"HTTP {status} @ {url}")
-    if cookie:
-        await save_search_cookie(cookie)
     return text
 
 
@@ -768,20 +653,7 @@ async def search(params, context):
         if page > 1:
             return {"page": page, "pagecount": 1, "total": 0, "list": []}
         url = f"{BASE_URL}/plus/search.php?q={quote(keyword)}&pagesize=10"
-
-        text = ""
-        cached_cookie = await load_search_cookie()
-        if cached_cookie:
-            await log("info", f"[rrdynb][search] try cached cookie")
-            try:
-                text = await request_text(url, referer=f"{BASE_URL}/", cookie=cached_cookie)
-            except Exception as e:
-                await log("warn", f"[rrdynb][search] cached cookie failed: {e}")
-                await clear_search_cookie()
-
-        if not text:
-            text = await request_text(url, referer=f"{BASE_URL}/")
-
+        text = await request_text(url, referer=f"{BASE_URL}/")
         merged = []
         for cfg in CATEGORY_MAP.values():
             merged.extend(extract_cards(text, cfg["type_id"], cfg["type_name"]))
