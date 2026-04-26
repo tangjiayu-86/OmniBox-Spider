@@ -19,7 +19,10 @@ const TRVOD_CF_AUTO = process.env.TRVOD_CF_AUTO !== '0';
 const TRVOD_CF_CACHE_KEY = process.env.TRVOD_CF_CACHE_KEY || 'trvod:cf_clearance';
 const TRVOD_CF_MAX_AGE_SECONDS = parseInt(process.env.TRVOD_CF_MAX_AGE_SECONDS || '21600', 10) || 21600;
 const TRVOD_CF_TIMEOUT_MS = parseInt(process.env.TRVOD_CF_TIMEOUT_MS || '60000', 10) || 60000;
+// FlareSolverr 服务地址，优先读取站点专用变量，其次回退通用 FLARESOLVERR_URL。
+// 项目地址：https://github.com/FlareSolverr/FlareSolverr
 const TRVOD_FLARESOLVERR_URL = process.env.TRVOD_FLARESOLVERR_URL || process.env.FLARESOLVERR_URL || 'http://192.168.50.50:8191/v1';
+// FlareSolverr 会话名，用于复用已过验证的浏览器会话。
 const TRVOD_FLARESOLVERR_SESSION = process.env.TRVOD_FLARESOLVERR_SESSION || '';
 
 const axiosInstance = axios.create({
