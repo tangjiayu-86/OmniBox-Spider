@@ -1391,10 +1391,7 @@ async function detail(params, context) {
         }
         const sortedNetdiskSources = sortPlaySourcesByDriveOrder(netdiskSources);
         const expandedNetdiskSources = expandPanSourcesWithRoutes(sortedNetdiskSources, context?.from || "web");
-        const normalizedCollectSources = collectSources.map((source) => ({
-            name: source.name,
-            episodes: (source.episodes || []).map((ep) => ({ name: ep.name, playId: ep.playId }))
-        }));
+
 
         // --------- Unified scraping logic (replace previous per-source buckets) ---------
         // 1️⃣ 把所有已经展开的网盘线路（netdiskSources）和普通采集线路（collectSources）统一放进 allSources
