@@ -6,7 +6,7 @@
  * @searchable 1
  * @quickSearch 1
  * @changeable 0
- * @version 1.0.4
+ * @version 1.0.5
  * @downloadURL https://github.com/Silent1566/OmniBox-Spider/raw/main/影视/采集/歪比巴卜.js
  */
 
@@ -420,9 +420,10 @@ async function resolveWbbbPlayerUrl(playerToken, nextUrl, title, urlNextToken, l
   const finalUrl = (decryptResult.toString(CryptoJS.enc.Utf8) || '').trim();
 
   if (!finalUrl) throw new Error('decrypt failed');
-  if (finalUrl.startsWith('//')) return { url: `https:${finalUrl}`, type: payload.type || '', parsePageUrl };
-  if (finalUrl.startsWith('/')) return { url: `${SITE.host}${finalUrl}`, type: payload.type || '', parsePageUrl };
-  return { url: finalUrl, type: payload.type || '', parsePageUrl };
+  let resultUrl = finalUrl;
+  if (finalUrl.startsWith('//')) resultUrl = `https:${finalUrl}`;
+  else if (finalUrl.startsWith('/')) resultUrl = `${SITE.host}${finalUrl}`;
+  return { url: resultUrl, type: payload.type || '', parsePageUrl, cookie: parserCookie };
 }
 
 async function home(params = {}) {
@@ -710,8 +711,11 @@ async function play(params = {}) {
     if (resolved && resolved.url) {
       const resolvedUrl = String(resolved.url || '').trim();
       const resolvedType = String(resolved.type || '').trim();
-      const resolvedHeaders = buildPlayHeaders({ Referer: resolved.parsePageUrl || `${SITE.host}/` });
-      OmniBox.log('info', `[wbbb][play][resolved] url=${redactSensitive(resolvedUrl)}, type=${resolvedType || 'unknown'}, parsePage=${redactSensitive(resolved.parsePageUrl || '')}`);
+      const resolvedHeaders = buildPlayHeaders({
+        Referer: resolved.parsePageUrl || `${SITE.host}/`,
+        ...(resolved.cookie ? { Cookie: resolved.cookie } : {}),
+      });
+      OmniBox.log('info', `[wbbb][play][resolved] url=${redactSensitive(resolvedUrl)}, type=${resolvedType || 'unknown'}, parsePage=${redactSensitive(resolved.parsePageUrl || '')}, hasCookie=${!!resolved.cookie}`);
       if (isDirectMediaUrl(resolvedUrl, resolvedType)) {
         return { parse: 0, jx: 0, url: resolvedUrl, playId: resolvedUrl, header: resolvedHeaders };
       }
