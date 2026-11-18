@@ -1,31 +1,35 @@
-name: Auto-sync
+name: Upstream Sync
+
+permissions:
+  contents: write
+
 on:
   schedule:
-    - cron: "0 */12 * * *"
+    - cron: "0 0 * * *" # every day
   workflow_dispatch:
+
 jobs:
-  sync:
+  sync_latest_from_upstream:
+    name: Sync latest commits from upstream repo
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    if: ${{ github.event.repository.fork }}
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+
+      - name: Sync upstream changes
+        id: sync
+        uses: aormsby/fork-sync-with-upstream-action@v3.4.3
         with:
-          ref: main
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Configure git
+          upstream_sync_repo: Silent1566/OmniBox-Spider
+          upstream_sync_branch: main
+          target_sync_branch: main
+          target_repo_token: ${{ secrets.GITHUB_TOKEN }}
+          test_mode: false
+
+      - name: Sync check
+        if: failure()
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-      - name: Sync from upstream
-        run: |
-          upstream="${{ github.event.repository.parent.full_name }}"
-          if [ -z "$upstream" ]; then
-            echo "Not a fork, skipping"; exit 0
-          fi
-          git remote add upstream "https://github.com/${upstream}.git" 2>/dev/null || git remote set-url upstream "https://github.com/${upstream}.git"
-          git fetch upstream
-          git checkout main
-          git merge upstream/main --allow-unrelated-histories --no-edit || (git merge --abort 2>/dev/null; exit 0)
-          git push origin main
+          echo "[Error] Sync failed due to workflow change or merge conflict, please sync manually"
+          exit 1
